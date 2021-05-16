@@ -19,10 +19,10 @@ import torch.nn.functional as F
 from collections import OrderedDict
 import random
 
-param = 'ranking'
+param = 'MSE'
 
 outfile = open('/home/zongwz/%slogen-zh.txt' % param, 'w+', encoding='utf-8')
-torch.cuda.set_device(0)
+torch.cuda.set_device(7)
 tokenizer = BertTokenizer.from_pretrained('/home/data_ti4_c/zongwz/bert-base-multilingual-cased')
 bertmodel = BertModel.from_pretrained('/home/data_ti4_c/zongwz/bert-base-multilingual-cased', return_dict=True)
 datas = dataLoader.read_enzh('en-zh.train')
@@ -34,8 +34,8 @@ Test2 = pd.DataFrame(test2)
 dev = dataLoader.read_enzh('en-zh.dev')
 Dev = pd.DataFrame(dev)
 MAX_SEQUENCE_LENGTH = 200
-train_batch_size = 2
-test_batch_size = 2
+train_batch_size = 25
+test_batch_size = 25
 epoch_num = 20
 Datas['label'] = Datas['label'].astype(float)
 Test1['label'] = Test1['label'].astype(float)
@@ -86,7 +86,7 @@ class BertMatch(nn.Module):
 
 model = BertMatch()
 model = model.to(device)
-learning_rate = 1e-5
+learning_rate = 1e-6
 optim = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 criterion = nn.MSELoss()
 train_metric = mc.Metrics()
@@ -151,7 +151,7 @@ def one_epoch(metric, state, inputs, labels, batch_size):
             simples = torch.LongTensor([inputs[i][sub_idx] for i in range(3)]).to(device)
             if state == 0:
 
-                model_output = model(input_ids=simples[0], attention_mask=simples[1], token_type_ids=simples[2])
+                model_output = 6.0 * model(input_ids=simples[0], attention_mask=simples[1], token_type_ids=simples[2])
                 loss = criterion(model_output.view(-1), target)
                 losssum += loss
                 loss.backward()
