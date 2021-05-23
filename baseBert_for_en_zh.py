@@ -5,6 +5,7 @@ from transformers import AdamW
 import pickle
 from torch.utils.data import DataLoader
 import numpy as np
+import time
 import pandas as pd
 import sys
 import dataProc
@@ -18,21 +19,24 @@ import dataProc as dp
 import torch.nn.functional as F
 from collections import OrderedDict
 import random
-
-param = 'MSE'
-
-outfile = open('/home/zongwz/%slogen-zh.txt' % param, 'w+', encoding='utf-8')
-torch.cuda.set_device(7)
+paramdict = {}
+paramdict['lr'] = 8e-6
+param = 'ranking' #ranking or MSE
+paramdict['train_size'] = 100000 #100-1000000 or -1
+paramdict['test_size'] = 30000 #100-100000 or -1
+learning_rate = paramdict['lr']
+outfile = open('/home/zongwz/%slogen-zh-%s.txt'% (param,time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())), 'w+', encoding='utf-8')
+torch.cuda.set_device(3)
 tokenizer = BertTokenizer.from_pretrained('/home/data_ti4_c/zongwz/bert-base-multilingual-cased')
 bertmodel = BertModel.from_pretrained('/home/data_ti4_c/zongwz/bert-base-multilingual-cased', return_dict=True)
 datas = dataLoader.read_enzh('en-zh.train')
-Datas = pd.DataFrame(datas)
+Datas = pd.DataFrame(datas)[:paramdict['train_size']]
 test1 = dataLoader.read_enzh('en-zh.test1')
-Test1 = pd.DataFrame(test1)
+Test1 = pd.DataFrame(test1)[:paramdict['test_size']]
 test2 = dataLoader.read_enzh('en-zh.test2')
-Test2 = pd.DataFrame(test2)
+Test2 = pd.DataFrame(test2)[:paramdict['test_size']]
 dev = dataLoader.read_enzh('en-zh.dev')
-Dev = pd.DataFrame(dev)
+Dev = pd.DataFrame(dev)[:paramdict['test_size']]
 MAX_SEQUENCE_LENGTH = 200
 train_batch_size = 25
 test_batch_size = 25
@@ -44,9 +48,7 @@ Dev['label'] = Dev['label'].astype(float)
 input_categories = ['query', 'doc']
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-
-def convert_inputs(file, inDatas):
+def convert_inputs(file,inDatas = ''):
     if os.path.exists(file):
         _inputs = pickle.load(open(file, 'rb'))
     else:
@@ -54,14 +56,17 @@ def convert_inputs(file, inDatas):
         pickle.dump(_inputs, open(file, 'wb'))
     return _inputs
 
+def get_split(Inp,size):
+    tmp = [[x[i] for i in range(size)] for x in Inp]
+    return np.array(tmp)
 
-train_inputs = convert_inputs('/home/data_ti4_c/zongwz/CLIR/en-zh_train_inputs.pkl', Datas)
+train_inputs = get_split(convert_inputs('/home/data_ti4_c/zongwz/CLIR/en-zh_train_inputs.pkl'),paramdict['train_size'])
 train_outputs = dataProc.compute_output_arrays(Datas, 'label')
-test1_inputs = convert_inputs('/home/data_ti4_c/zongwz/CLIR/en-zh_test1_inputs.pkl', Test1)
+test1_inputs = get_split(convert_inputs('/home/data_ti4_c/zongwz/CLIR/en-zh_test1_inputs.pkl'),paramdict['test_size'])
 test1_outputs = dataProc.compute_output_arrays(Test1, 'label')
-test2_inputs = convert_inputs('/home/data_ti4_c/zongwz/CLIR/en-zh_test2_inputs.pkl', Test2)
+test2_inputs = get_split(convert_inputs('/home/data_ti4_c/zongwz/CLIR/en-zh_test2_inputs.pkl'),paramdict['test_size'])
 test2_outputs = dataProc.compute_output_arrays(Test2, 'label')
-dev_inputs = convert_inputs('/home/data_ti4_c/zongwz/CLIR/en-zh_dev_inputs.pkl', Dev)
+dev_inputs = get_split(convert_inputs('/home/data_ti4_c/zongwz/CLIR/en-zh_dev_inputs.pkl'),paramdict['test_size'])
 dev_outputs = dataProc.compute_output_arrays(Dev, 'label')
 
 
@@ -86,7 +91,7 @@ class BertMatch(nn.Module):
 
 model = BertMatch()
 model = model.to(device)
-learning_rate = 1e-6
+
 optim = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 criterion = nn.MSELoss()
 train_metric = mc.Metrics()
@@ -108,9 +113,9 @@ def run_model():
 
         elif param == 'ranking':
             ranking_one_epoch(train_metric, 0, train_inputs, train_outputs, train_batch_size)
-            ranking_one_epoch(dev_metric, 1, dev_inputs, dev_outputs, test_batch_size)
+            ranking_one_epoch(dev_metric, 1, dev_inputs, dev_outputs,test_batch_size)
             ranking_one_epoch(test1_metric, 1, test1_inputs, test1_outputs, test_batch_size)
-            ranking_one_epoch(test2_metric, 1, test2_inputs, test2_outputs, test_batch_size)
+            ranking_one_epoch(test2_metric,1,test2_inputs,test2_outputs,test_batch_size)
 
         valid_acc, valid_loss = dev_metric.compute()
         train_acc, train_loss = train_metric.compute()
@@ -118,7 +123,7 @@ def run_model():
         test2_acc, test2_loss = test2_metric.compute()
 
         s = '\t'.join(
-            [str(train_acc), str(train_loss), str(valid_acc), str(valid_loss), str(test1_acc), str(test1_loss),
+            [str(epoch),str(train_acc), str(train_loss), str(valid_acc), str(valid_loss), str(test1_acc), str(test1_loss),
              str(test2_acc), str(test2_loss)])
         outfile.write(s + '\n')
         print('train:ndcg100:%s  loss:%s' % (train_acc, train_loss))
@@ -200,7 +205,7 @@ def ranking_one_epoch(metric, state, inputs, labels, batch_size):
         if state == 0:
             for cnt1 in Pidx:
                 totnum += 2
-
+                
                 sub_idx = [cnt1, get_rand(nidx, cnt + 99 if nidx < cnt + 99 else cnt + 199)]
                 target = torch.FloatTensor(labels[sub_idx]).to(device)
                 simples = torch.LongTensor([inputs[i][sub_idx] for i in range(3)]).to(device)
@@ -241,4 +246,5 @@ def ranking_one_epoch(metric, state, inputs, labels, batch_size):
 
 
 run_model()
+outfile.close()
 # torch.save(model.state_dict(), r'/home/data_ti4_c/zongwz/data_en_de/parameter.pkl')
